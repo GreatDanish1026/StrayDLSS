@@ -1,4 +1,4 @@
-# StrayDLSS 1.0.0
+# StrayDLSS 1.0.1
 
 ReShade add-on for **Stray** (Unreal Engine 4.27, DirectX 12) that replaces the game's TAA
 anti-aliasing with **NVIDIA DLSS** or **AMD FSR**, and adds **DLSS Frame Generation** or **FSR
@@ -28,7 +28,7 @@ an RTX 30 card).
 - **Render resolution**: Native/DLAA, Quality, Balanced, Performance or Ultra Performance. The game
   renders at 100% by itself, so "Game's" is Native. The lower modes set the engine's screen
   percentage while the upscaler is on and give the game's value back when it's off.
-- **DLSS model**: K (transformer, default), J, L, M or NVIDIA's default. **FSR sharpness**: 0-1.
+- **DLSS model**: Automatic (default: K, M at Performance, L at Ultra Performance, as NVIDIA recommends), or K, J, L or M (DLSS 4.5) at every resolution, or NVIDIA's default. **FSR sharpness**: 0-1.
 - **Frame generation**: Off, DLSS 2x / 3x / 4x / Dynamic (NVIDIA Streamline 2.14.16, with Reflex),
   or FSR 2x (AMD's frame generation swapchain; no Reflex, so a little more latency). Runs in game,
   not in menus. Switching it on, or between DLSS and FSR, takes a game restart; DLSS's multipliers

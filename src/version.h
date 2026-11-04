@@ -1,6 +1,6 @@
-// Single source of the product name and version number.
+﻿// Single source of the product name and version number.
 #pragma once
 
 #define RD_PRODUCT "StrayDLSS"  // add-on name, log file name, ReShade.ini section
 #define RD_GAME "Stray"
-#define RD_VERSION "1.0.0"
+#define RD_VERSION "1.0.1"

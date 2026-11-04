@@ -69,7 +69,7 @@ struct Settings {
     // (saved: FsrVelocityFactor, FsrSwaying, FsrShadingChange).
     bool fsrJitterFlip = false, fsrDebug = false;
     float fsrVelocity = 1.0f, fsrSwaying = -1.0f / 3, fsrShading = 1.0f;
-    int preset = 11;       // NVSDK_NGX_DLSS_Hint_Render_Preset_K (transformer)
+    int preset = dlss::kPresetAuto;  // DLSS model: Automatic, or NVSDK_NGX_DLSS_Hint_Render_Preset_* (0 = NVIDIA's)
     int mode = 0;          // DlssMode: 0 leaves the render resolution to the game's Resolution Scale
     int maskMode = 0;      // motion.hlsl MaskMode: 0 off, 2 moving objects (UE 4 has no animation flag)
     bool showMask = false;  // debug tint, not saved
@@ -100,7 +100,7 @@ void LoadSettings() {
     if (!(g_set.fsrSwaying >= -1 && g_set.fsrSwaying <= 1)) g_set.fsrSwaying = -1.0f / 3;
     reshade::get_config_value(nullptr, RD_PRODUCT, "FsrShadingChange", g_set.fsrShading);
     if (!(g_set.fsrShading >= 0 && g_set.fsrShading <= 2)) g_set.fsrShading = 1.0f;
-    reshade::get_config_value(nullptr, RD_PRODUCT, "Preset", g_set.preset);
+    reshade::get_config_value(nullptr, RD_PRODUCT, "DlssModel", g_set.preset);
     reshade::get_config_value(nullptr, RD_PRODUCT, "DlssMode", g_set.mode);
     reshade::get_config_value(nullptr, RD_PRODUCT, "AnimationMask", g_set.maskMode);
     if (g_set.maskMode != 0 && g_set.maskMode != 2) g_set.maskMode = 0;
@@ -117,7 +117,7 @@ void SaveSettings() {
     reshade::set_config_value(nullptr, RD_PRODUCT, "FsrVelocityFactor", g_set.fsrVelocity);
     reshade::set_config_value(nullptr, RD_PRODUCT, "FsrSwaying", g_set.fsrSwaying);
     reshade::set_config_value(nullptr, RD_PRODUCT, "FsrShadingChange", g_set.fsrShading);
-    reshade::set_config_value(nullptr, RD_PRODUCT, "Preset", g_set.preset);
+    reshade::set_config_value(nullptr, RD_PRODUCT, "DlssModel", g_set.preset);
     reshade::set_config_value(nullptr, RD_PRODUCT, "DlssMode", g_set.mode);
     reshade::set_config_value(nullptr, RD_PRODUCT, "AnimationMask", g_set.maskMode);
     reshade::set_config_value(nullptr, RD_PRODUCT, "TranslucencyMask", g_set.transMask);
@@ -1292,12 +1292,19 @@ void SaveAndLog() {
         kDlssModeNames[g_set.mode >= 0 && g_set.mode < kDlssModeCount ? g_set.mode : 0]);
 }
 
-// Preset ids (NVSDK_NGX_DLSS_Hint_Render_Preset_*) and their names in the overlay.
-const char* const kPresetNames[] = {"NVIDIA default", "J", "K (recommended)", "L", "M"};
-const int kPresetIds[] = {0, 10, 11, 12, 13};
-constexpr int kPresetCount = 5;
+// DLSS models offered (NVSDK_NGX_DLSS_Hint_Render_Preset_*; dlss::kPresetAuto = per render scale).
+const char* const kModelNames[] = {"Automatic (recommended)", "K (transformer)", "J (transformer)",
+                                   "L (transformer 2, DLSS 4.5)", "M (transformer 2, DLSS 4.5)", "NVIDIA's default"};
+const int kModelIds[] = {dlss::kPresetAuto, 11, 10, 12, 13, 0};
+constexpr int kModelCount = 6;
+int ModelIndex(int id) {
+    for (int i = 0; i < kModelCount; ++i)
+        if (kModelIds[i] == id) return i;
+    return 0;
+}
 
 const char* PresetName(int id) {
+    if (id == dlss::kPresetAuto) return "Automatic";
     if (id == 0) return "NVIDIA default";
     static char buf[8];
     snprintf(buf, sizeof(buf), "%c", id > 0 && id < 26 ? static_cast<char>('A' + id - 1) : '?');
@@ -1325,13 +1332,14 @@ void DrawUpscalerSettings() {
     if (g_res.failed) ImGui::TextColored(kWarn, "Render resolution: %s", g_res.error.c_str());
 
     if (shown != kFsr) {
-        int cur = 2;
-        for (int i = 0; i < kPresetCount; ++i)
-            if (kPresetIds[i] == g_set.preset) cur = i;
+        int cur = ModelIndex(g_set.preset);
         ImGui::SetNextItemWidth(ControlWidth());
-        if (ImGui::Combo("DLSS model", &cur, kPresetNames, kPresetCount)) g_set.preset = kPresetIds[cur], SaveAndLog();
-        Help("DLSS's model (preset). K is NVIDIA's transformer model, sharpest in motion. A DLSS override set in the "
-             "NVIDIA App takes precedence over this.");
+        if (ImGui::Combo("DLSS model", &cur, kModelNames, kModelCount)) g_set.preset = kModelIds[cur], SaveAndLog();
+        Help("Which DLSS model upscales. Automatic follows NVIDIA's recommendation for the render "
+             "resolution: K from 100% down to Balanced, M at Performance (50%), L at Ultra Performance "
+             "(33%). K, J, L or M use that model at every resolution; L and M (DLSS 4.5's "
+             "second-generation transformer) cost more, especially on RTX 20 and 30 cards. NVIDIA's "
+             "default leaves it to the driver. A DLSS override set in the NVIDIA App takes precedence.");
     }
     if (shown != kDlss) {
         ImGui::SetNextItemWidth(ControlWidth());

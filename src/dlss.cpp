@@ -304,7 +304,9 @@ bool Evaluate(ID3D12GraphicsCommandList* list, const Inputs& requested, std::str
         dp.InMVScaleY = in.motionScaleY;
         dp.InPreExposure = 1.0f;
         dp.InExposureScale = 1.0f;
-        float worldToView[16], viewToClip[16];  // NGX keeps the pointers until evaluation
+        // The parameter block keeps these pointers after the call, so they point at storage that
+        // lives on (Super Resolution clears them before its own evaluations).
+        static float worldToView[16], viewToClip[16];
         memcpy(worldToView, in.worldToView, sizeof(worldToView));
         memcpy(viewToClip, in.viewToClip, sizeof(viewToClip));
         dp.pInWorldToViewMatrix = worldToView;
@@ -321,6 +323,10 @@ bool Evaluate(ID3D12GraphicsCommandList* list, const Inputs& requested, std::str
         g_status = buf;
         return true;
     }
+    // Ray Reconstruction's camera matrices stay in the shared parameter block: Super Resolution reads
+    // them if present ("WorldToScreenMatrix not invertible" when they're stale), so clear them.
+    NVSDK_NGX_Parameter_SetVoidPointer(g_params, NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX, nullptr);
+    NVSDK_NGX_Parameter_SetVoidPointer(g_params, NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX, nullptr);
     NVSDK_NGX_D3D12_DLSS_Eval_Params ep = {};
     ep.Feature.pInColor = in.color;
     ep.Feature.pInOutput = in.output;

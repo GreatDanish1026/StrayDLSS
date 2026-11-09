@@ -878,7 +878,16 @@ void OnBindRenderTargets(command_list* cl, uint32_t count, const resource_view* 
         if (!rtvs[i].handle) return;
         f[i] = dev->get_resource_view_desc(rtvs[i]).format;
     }
-    if (!IsHdrColor(f[0]) || !IsNormalFormat(f[1]) || !Is8BitColor(f[2]) || !Is8BitColor(f[3])) return;
+    if (!IsHdrColor(f[0]) || !IsNormalFormat(f[1]) || !Is8BitColor(f[2]) || !Is8BitColor(f[3])) {
+        static std::atomic<int> logged{0};  // what else binds 4+ targets (a base pass we don't recognise?)
+        if (logged++ < 6) {
+            const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(rtvs[0]));
+            Log("render targets not taken as a G-buffer: %u targets %ux%u, formats %u %u %u %u", count, d.texture.width,
+                d.texture.height, static_cast<uint32_t>(f[0]), static_cast<uint32_t>(f[1]), static_cast<uint32_t>(f[2]),
+                static_cast<uint32_t>(f[3]));
+        }
+        return;
+    }
     const resource a = dev->get_resource_from_view(rtvs[1]), b = dev->get_resource_from_view(rtvs[2]),
                    c = dev->get_resource_from_view(rtvs[3]);
     if (!a.handle || !b.handle || !c.handle) return;
@@ -1707,7 +1716,9 @@ void DrawUpscalerSettings() {
             if (ImGui::Combo("Ray Reconstruction model", &cur, kRrNames, 4)) g_set.rrPreset = kRrIds[cur], SaveAndLog();
             Help("Which Ray Reconstruction model runs: D (transformer), E (newer transformer) or F (NVIDIA's\n"
                  "second-generation Ray Reconstruction model). NVIDIA's default lets the driver choose. The DLSS\n"
-                 "model choice above doesn't apply while Ray Reconstruction is on.");
+                 "model choice above doesn't apply while Ray Reconstruction is on.\n\n"
+                 "A Ray Reconstruction model override set in the NVIDIA App (DLSS Override - Model Presets) takes\n"
+                 "precedence over this choice: set it to \"Use app default\" there for this choice to apply.");
             std::string err;
             {
                 std::lock_guard<std::recursive_mutex> lock(g_mutex);

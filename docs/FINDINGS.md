@@ -61,3 +61,35 @@ and FSR frame generation; its FINDINGS are the reference for the method). Change
   camera-cut frames (game TAA keeps those, nothing tagged), as in True Colors. Streamline shut down
   in order; clean exit.
 - User: **DLSS and FSR "both look good"** (upscaling and frame generation).
+
+## 1.1.0: DLSS Ray Reconstruction (2026-11-09)
+
+Ray Reconstruction (NGX DLSSD, `nvngx_dlssd.dll` 310.9.16 from Streamline 2.14.16's bin/x64)
+replaces Super Resolution at the same TAA dispatch when switched on.
+
+- **G-buffer**: found when the base pass binds its render targets (7 here): RT0 HDR scene colour,
+  RT1 GBufferA format 24 (rgb10a2: world normal * 0.5 + 0.5), RT2 GBufferB format 87 (bgra8:
+  metallic, specular, roughness, shading model id in the low 4 bits of a), RT3 GBufferC format 91
+  (bgra8 sRGB: base colour). Remembered by size (2228x1256 at Balanced); UE's render target pool
+  hands out different textures from frame to frame, so the latest set is used. Read as shader
+  resources at the TAA (no barriers needed in testing).
+- **Guides** (`src/guide.hlsl`): diffuse albedo = base colour * (1 - metallic); specular albedo =
+  UE's EnvBRDFApprox(lerp(0.08 * specular, base colour, metallic), roughness, N.V); world normal
+  with roughness in w (packed mode). Unlit pixels (sky): diffuse 1, specular 0, normal facing the
+  camera.
+- **Matrices**: View.TranslatedWorldToView at byte 192 (a pure rotation: the camera sits at the
+  translated origin) and View.ViewToClipNoAA at 512 (reversed-Z infinite, near 1). Both checked
+  every frame (orthonormal rows, no translation; same projection as ViewToClip at 448 minus jitter).
+- **Denoisers** (names from the exe): r.Shadow.Denoiser 2, r.Reflections.Denoiser 2,
+  r.AmbientOcclusion.Denoiser 2, r.DiffuseIndirect.Denoiser 1, r.RayTracing.GlobalIllumination.Denoiser 1,
+  r.RayTracing.SkyLight.Denoiser 1 (game values) set to 0 on the game thread while RR ran in the
+  last 120 presents, values and priorities restored after.
+- NGX keeps the matrix pointers in its shared parameter block: Super Resolution then read stale
+  ones ("WorldToScreenMatrix not invertible", hundreds of lines) after RR was switched off. Fixed:
+  RR's matrices live in static storage, and they're cleared before each Super Resolution frame.
+- The NVIDIA App's DLSS override (Model Presets) wins over the RR preset hint: the user's forces F.
+
+Test (2026-11-09, 4K HDR, Balanced, RTX 5080, StrayTweaks RT reflections/shadows/AO on): RR ran on
+every gameplay frame with DLSS Frame Generation 2x; denoisers off/on with the toggle; guide views
+shown; user: looks good. In the main menu no G-buffer set matched (Super Resolution there; RR starts
+at the first level load); unmatched 4+ target sets are now logged to find out why.

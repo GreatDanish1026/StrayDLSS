@@ -93,3 +93,15 @@ Test (2026-11-09, 4K HDR, Balanced, RTX 5080, StrayTweaks RT reflections/shadows
 every gameplay frame with DLSS Frame Generation 2x; denoisers off/on with the toggle; guide views
 shown; user: looks good. In the main menu no G-buffer set matched (Super Resolution there; RR starts
 at the first level load); unmatched 4+ target sets are now logged to find out why.
+
+## DirectX 11 (branch dx11, started 2026-11-16)
+
+Stray runs DirectX 11 unless started with `-dx12`. Plan: the same add-on works on both; DX11 gets
+DLSS (NGX D3D11, as in RE2DLSS-DX11) and FSR (through a D3D12 bridge), no frame generation and no
+Ray Reconstruction (no ray tracing on DX11).
+
+- 1.2.0-dx11probe: main.cpp reads the command line at load; without `-dx12`/`-d3d12` only
+  `src/probe11.cpp` (RE2DLSS-DX11 0.0.1's D3D11 capture, per-context binding tracking, deferred
+  command lists) is registered, none of the DX12 code. F10 writes `StrayDLSS-DX11-frame-N.txt`.
+  Every compute shader declaring exactly t0-t5 + u0 (the DX12 TAA's shape) is logged the first
+  time it's dispatched. Not yet run.

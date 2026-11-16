@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwctype>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -28,6 +29,7 @@
 
 #include "common.hpp"
 #include "dxbc.hpp"
+#include "probe11.hpp"
 #include "version.h"
 #include "../third_party/reshade/utils/descriptor_tracking.hpp"
 
@@ -611,8 +613,30 @@ void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t
 
 // ---------------------------------------------------------------- overlay
 
+// Stray runs DirectX 11 unless started with -dx12 (or -d3d12). Decided at load, before the game
+// makes its device: the DX12 code (frame generation wraps swapchain creation) mustn't see a D3D11
+// device, so in DX11 mode only probe11.cpp is registered.
+bool g_dx11 = false;
+
+bool LaunchedDx12() {
+    std::wstring cmd = GetCommandLineW();
+    for (wchar_t& c : cmd) c = towlower(c);
+    for (const wchar_t* opt : {L"-dx12", L"-d3d12"}) {
+        for (size_t at = cmd.find(opt); at != std::wstring::npos; at = cmd.find(opt, at + 1)) {
+            const size_t end = at + wcslen(opt);
+            if ((at == 0 || iswspace(cmd[at - 1])) && (end == cmd.size() || iswspace(cmd[end]) || cmd[end] == L'"'))
+                return true;
+        }
+    }
+    return false;
+}
+
 void DrawOverlay(effect_runtime*) {
     ImGui::TextDisabled(RD_PRODUCT " " RD_VERSION);
+    if (g_dx11) {
+        probe11::DrawOverlay();
+        return;
+    }
     bool warn = false;
     const std::string up = rd::UpscalerHeadline(&warn);
     if (warn) ImGui::TextColored(rd::kWarn, "%s", up.c_str());
@@ -689,6 +713,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
             if (!reshade::register_addon(module)) return FALSE;
             g_loadTick = GetTickCount64();
             OpenLog();
+            g_dx11 = !LaunchedDx12();
+            if (g_dx11) {
+                probe11::Register(module);
+                reshade::register_overlay(RD_PRODUCT, &DrawOverlay);
+                break;
+            }
             descriptor_tracking::register_events();
             rd::RegisterUpscaler();
             rd::RegisterFrameGen();
@@ -712,6 +742,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
             reshade::register_overlay(RD_PRODUCT, &DrawOverlay);
             break;
         case DLL_PROCESS_DETACH:
+            if (g_dx11) {
+                probe11::Unregister();
+                reshade::unregister_addon(module);
+                if (g_log) fclose(g_log);
+                break;
+            }
             rd::UnregisterFrameGen();
             rd::UnregisterUpscaler();
             descriptor_tracking::unregister_events();

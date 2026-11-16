@@ -1,17 +1,22 @@
-# StrayDLSS 1.1.0
+# StrayDLSS 1.2.0
 
-ReShade add-on for **Stray** (Unreal Engine 4.27, DirectX 12) that replaces the game's TAA
-anti-aliasing with **NVIDIA DLSS** (optionally **DLSS Ray Reconstruction**) or **AMD FSR**, and
-adds **DLSS Frame Generation** or **FSR Frame Generation**. The game has none of these. It's separate from StrayTweaks (graphics
-settings, ray tracing), and the two can be installed side by side.
+ReShade add-on for **Stray** (Unreal Engine 4.27) that replaces the game's TAA anti-aliasing with
+**NVIDIA DLSS** (optionally **DLSS Ray Reconstruction**) or **AMD FSR**, and adds **DLSS Frame
+Generation** or **FSR Frame Generation**. The game has none of these. It's separate from StrayTweaks
+(graphics settings, ray tracing), and the two can be installed side by side.
 
-Needs the game's **DirectX 12** mode (Steam launch option `-dx12`) and ReShade 6.8 with add-on
-support. On DirectX 12 the game ray traces by itself and runs much slower than on DirectX 11;
-upscaling and frame generation win that back.
+Works on both of the game's renderers. Needs ReShade 6.8 with add-on support.
+
+- **DirectX 11** (the game's default, no launch option): **DLSS upscaling** (DLAA to Ultra
+  Performance). No FSR, frame generation or Ray Reconstruction on DirectX 11.
+- **DirectX 12** (Steam launch option `-dx12`): everything below. On DirectX 12 the game ray traces
+  by itself and runs much slower than on DirectX 11; upscaling and frame generation win that back.
+
+The add-on picks its DirectX 11 or 12 part from the launch options when the game starts.
 
 | | Graphics card |
 |---|---|
-| DLSS upscaling | NVIDIA RTX |
+| DLSS upscaling (DirectX 11 or 12) | NVIDIA RTX |
 | DLSS Ray Reconstruction | NVIDIA RTX |
 | FSR upscaling | any DirectX 12 card: FSR 4 on Radeon RX 6000 and newer, FSR 3.1 elsewhere |
 | DLSS Frame Generation | NVIDIA RTX 40 or 50 (3x, 4x and Dynamic: RTX 50), hardware-accelerated GPU scheduling |
@@ -52,7 +57,9 @@ picks up HDR from the swapchain.
 
 The overlay (ReShade's Add-ons tab) shows a summary of the upscaler and frame generation at the top,
 with **Settings**, **Status** and **Advanced** (testing tools including FSR's, frame capture) tabs.
-Settings are saved in `ReShade.ini` under `[StrayDLSS]`.
+On DirectX 11 it shows DLSS on/off (F9), DLSS mode and DLSS model, with the status below.
+Settings are saved in `ReShade.ini` under `[StrayDLSS]` and shared by both renderers (on DirectX
+11, Upscaler set to FSR still means DLSS).
 
 ## Install
 
@@ -61,9 +68,11 @@ Settings are saved in `ReShade.ini` under `[StrayDLSS]`.
 2. Copy everything from the release zip into that folder: `StrayDLSS.addon64`, `nvngx_dlss.dll`,
    `nvngx_dlssd.dll` (Ray Reconstruction), the three `amd_fidelityfx_*_dx12.dll` files and the `streamline` folder (the licence files can
    go along).
-3. Add `-dx12` to Stray's launch options in Steam, start the game, open ReShade (Home key),
-   Add-ons tab, StrayDLSS: switch the upscaler on (or press F9), pick DLSS or FSR and a render
-   resolution and, if you like, frame generation (takes effect after a restart).
+3. For everything (FSR, frame generation, Ray Reconstruction): add `-dx12` to Stray's launch
+   options in Steam. For DLSS on the game's default DirectX 11 renderer: no launch option.
+   Start the game, open ReShade (Home key), Add-ons tab, StrayDLSS: switch the upscaler on (or press
+   F9), pick a render resolution and, on DirectX 12, DLSS or FSR and, if you like, frame generation
+   (takes effect after a restart).
 4. A DLSS model override for the game in the NVIDIA App takes precedence over DLSS model (and a
    Ray Reconstruction override over Ray Reconstruction model).
 
@@ -75,7 +84,8 @@ files, signed by AMD. Their licences are in `licenses`, and attribution is in
 Tested with Steam build 12863654 at 3840x2160 (HDR via RenoDX, StrayTweaks installed) on an
 NVIDIA RTX 5080: DLSS (DLAA and Balanced) and FSR 3.1 upscaling, DLSS Ray Reconstruction
 (Balanced, with ray-traced reflections, shadows and ambient occlusion, DLSS Frame Generation 2x),
-DLSS Frame Generation (Dynamic) and FSR Frame Generation 2x. To uninstall, delete those files. Logs: `StrayDLSS.log` next to the
+DLSS Frame Generation (Dynamic) and FSR Frame Generation 2x; on DirectX 11 (1.2.0), DLSS at DLAA,
+Quality, Balanced and Performance, switched live. To uninstall, delete those files. Logs: `StrayDLSS.log` next to the
 game's exe, Streamline's in `streamline\sl.log`.
 
 ## Build
@@ -96,3 +106,9 @@ offsets (unchanged from 4.25), how Ray Reconstruction's inputs are made from the
 test results. The F10 frame capture (Advanced tab) writes
 two frames of GPU commands to `StrayDLSS-frame-N.txt`, for finding the TAA pass again after a game
 update.
+
+DirectX 11 (`src/upscaler11.cpp`, `src/dlss11.cpp`): the game runs the same TAA shaders as on
+DirectX 12, so DLSS replaces the same pass; the camera data comes from the View buffer as the CPU
+writes it, and DLSS runs through NGX's Direct3D 11 interface with the game's compute bindings saved
+and put back. `ReShade.ini` `[StrayDLSS] Dx11Capture=1` turns on a DirectX 11 frame capture (F10,
+`StrayDLSS-DX11-frame-N.txt`). `tools/mdunwind.py` reads the stack of a crash dump.

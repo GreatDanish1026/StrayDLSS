@@ -1,4 +1,4 @@
-# StrayDLSS 1.2.0
+# StrayDLSS 1.2.1
 
 ReShade add-on for **Stray** (Unreal Engine 4.27) that replaces the game's TAA anti-aliasing with
 **NVIDIA DLSS** (optionally **DLSS Ray Reconstruction**) or **AMD FSR**, and adds **DLSS Frame

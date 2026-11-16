@@ -23,6 +23,7 @@
 #include <windows.h>
 
 #include "common.hpp"
+#include "dxbc.hpp"
 #include "probe11.hpp"
 #include "version.h"
 
@@ -125,8 +126,9 @@ uint32_t Fnv(const void* data, size_t n) {
     return h;
 }
 
-// The registers an SM 5.0 shader declares (DXBC RDEF part).
-std::vector<Decl> ParseDecls(const uint8_t* p, size_t n) {
+// The registers an SM 5.0 shader's reflection (RDEF part) lists. Stray's DX11 shaders have none
+// (stripped; probe run 1, 2026-11-16), so ParseDecls reads the code's declarations first.
+std::vector<Decl> ParseRdef(const uint8_t* p, size_t n) {
     std::vector<Decl> out;
     auto u32 = [&](size_t off) -> uint32_t {
         uint32_t v = 0;
@@ -153,6 +155,21 @@ std::vector<Decl> ParseDecls(const uint8_t* p, size_t n) {
             out.push_back({cls, lo, cnt ? lo + cnt - 1 : lo});
         }
     }
+    return out;
+}
+
+// The registers a shader declares: from its code (SHEX/SHDR dcl_* tokens, dxbc.hpp), else RDEF.
+std::vector<Decl> ParseDecls(const uint8_t* p, size_t n) {
+    const ShaderDecl sd = ParseDxbc(p, n);
+    if (!sd.valid) return ParseRdef(p, n);
+    std::vector<Decl> out;
+    for (uint32_t r = 0; r < 128; ++r)
+        if (sd.HasSrv(r)) out.push_back({'t', r, r});
+    for (uint32_t r = 0; r < 64; ++r)
+        if (sd.HasUav(r)) out.push_back({'u', r, r});
+    for (uint32_t r = 0; r < 14; ++r)
+        if (sd.HasCb(r)) out.push_back({'b', r, r});
+    if (out.empty()) out.push_back({'s', 0, 0});  // declares nothing bound: still "known"
     return out;
 }
 

@@ -105,3 +105,22 @@ Ray Reconstruction (no ray tracing on DX11).
   command lists) is registered, none of the DX12 code. F10 writes `StrayDLSS-DX11-frame-N.txt`.
   Every compute shader declaring exactly t0-t5 + u0 (the DX12 TAA's shape) is logged the first
   time it's dispatched. Not yet run.
+
+### DX11 probe run 1 (2026-11-16, 3840x2160, HDR back buffer rgb10a2, no deferred contexts)
+
+- **Same TAA shaders as DX12, same bytecode**: `cs37876d91` at 100% (captures 1), `csed0bf55b` at
+  50% (capture 2, 1920x1080 -> 3840x2160), dispatched 480 x 270 (8x8 groups over the output).
+- Bindings (same registers as DX12): t0 exposure 1x1 rgba32f, t1 scene colour **r11g11b10f**
+  (render size), t2 depth d32s8 as r32f_x8x24, t3 velocity rgba16unorm, t4 stencil (same
+  texture), t5 history 3840x2160 rgba16f, u0 output 3840x2160 rgba16f (history ping-pong with t5).
+  b0 4096-byte $Globals (TAA parameters), b1 8192-byte buffer = View uniform buffer (shared by most
+  passes); b2-b4 small. t6+ are leftovers from earlier passes (not declared).
+- Next pass reads u0: `ps740c24b1` (bloom/post setup, writes 1920x1080 r11g11b10f).
+- Base pass MRT (7 RTs, render size): r11g11b10f scene colour, rgb10a2 GBufferA, bgra8 GBufferB,
+  bgra8 sRGB GBufferC, rgba16unorm velocity, 2x bgra8; depth d32s8.
+- Stray's DX11 shaders have **no RDEF reflection** (stripped): the probe's register list came up
+  empty, so the TAA-shape log never fired. Fixed: probe11 reads declarations from the code
+  (dxbc.hpp), as the DX12 path does (built, not yet re-run).
+- Plan for 0.x DX11: hook `cs37876d91`/`csed0bf55b` dispatch on the immediate context; DLSS via
+  NGX D3D11 into u0 (RE2DLSS-DX11's clean ID3DDeviceContextState swap), jitter/matrices from the
+  View buffer's CPU writes at the DX12 offsets (1952/2016/2080), then FSR through the D3D12 bridge.

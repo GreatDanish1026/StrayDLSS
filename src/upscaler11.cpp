@@ -89,7 +89,12 @@ struct ShaderInfo {
     bool taaRegs = false;  // declares exactly t0-t5 and u0
 };
 
-std::mutex g_mutex;  // everything below
+// Everything below. Recursive: NGX's D3D11 calls during DLSS come back through ReShade into these
+// event handlers on the same thread (a std::mutex threw there and the game aborted: 1.2.0-dx11a/b).
+std::recursive_mutex g_mutex;
+// True on the thread running our own work at the TAA: binding and dispatch events from NGX's calls
+// are not the game's and are ignored.
+thread_local bool g_inOwnWork = false;
 std::unordered_map<uint64_t, ShaderInfo> g_shaders;
 
 uint32_t Fnv(const void* data, size_t n) {
@@ -105,14 +110,14 @@ void OnInitPipeline(device*, pipeline_layout, uint32_t count, const pipeline_sub
         const shader_desc& s = *static_cast<const shader_desc*>(subobjects[i].data);
         if (!s.code || !s.code_size) continue;
         ShaderInfo info{Fnv(s.code, s.code_size), rd::CodeHasTaaRegisters(s.code, s.code_size)};
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_mutex);
         g_shaders[pipe.handle] = info;
         return;
     }
 }
 
 void OnDestroyPipeline(device*, pipeline pipe) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     g_shaders.erase(pipe.handle);
 }
 
@@ -132,7 +137,7 @@ void OnInitResource(device*, const resource_desc& desc, const subresource_data* 
     if (desc.type != resource_type::buffer || (desc.usage & resource_usage::constant_buffer) == 0 ||
         desc.buffer.size < kViewBytes || desc.buffer.size > 65536)
         return;
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     std::vector<uint8_t>& v = g_cbData[r.handle];
     v.assign(kViewBytes, 0);
     if (initial && initial->data) memcpy(v.data(), initial->data, kViewBytes);
@@ -140,12 +145,12 @@ void OnInitResource(device*, const resource_desc& desc, const subresource_data* 
 
 void OnMapBuffer(device*, resource r, uint64_t offset, uint64_t, map_access access, void** data) {
     if (access == map_access::read_only || !data || !*data || offset) return;
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     if (g_cbData.count(r.handle)) g_mapped[r.handle] = *data;
 }
 
 void OnUnmapBuffer(device*, resource r) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     auto m = g_mapped.find(r.handle);
     if (m == g_mapped.end()) return;
     memcpy(g_cbData[r.handle].data(), m->second, kViewBytes);
@@ -154,7 +159,7 @@ void OnUnmapBuffer(device*, resource r) {
 
 void CopyCb(resource r, const void* data, uint64_t offset, uint64_t size) {
     if (!data) return;
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     auto it = g_cbData.find(r.handle);
     if (it == g_cbData.end() || offset >= kViewBytes) return;
     if (size == UINT64_MAX || offset + size > kViewBytes) size = kViewBytes - offset;
@@ -182,14 +187,14 @@ struct Bindings {
 std::unordered_map<uint64_t, Bindings> g_bindings;  // device context -> compute stage
 
 void OnBindPipeline(command_list* cl, pipeline_stage stages, pipeline pipe) {
-    if ((stages & pipeline_stage::compute_shader) == 0) return;
-    std::lock_guard<std::mutex> lock(g_mutex);
+    if ((stages & pipeline_stage::compute_shader) == 0 || g_inOwnWork) return;
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     g_bindings[cl->get_native()].cs = pipe;
 }
 
 void OnPushDescriptors(command_list* cl, shader_stage stages, pipeline_layout, uint32_t, const descriptor_table_update& u) {
-    if ((stages & shader_stage::compute) == 0) return;
-    std::lock_guard<std::mutex> lock(g_mutex);
+    if ((stages & shader_stage::compute) == 0 || g_inOwnWork) return;
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     Bindings& b = g_bindings[cl->get_native()];
     for (uint32_t i = 0; i < u.count; ++i) {
         const uint32_t slot = u.binding + i;
@@ -211,7 +216,7 @@ void OnPushDescriptors(command_list* cl, shader_stage stages, pipeline_layout, u
 }
 
 void OnDestroyCommandList(command_list* cl) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     g_bindings.erase(cl->get_native());
 }
 
@@ -361,7 +366,7 @@ ID3D11ShaderResourceView* GameSrv(resource r, DXGI_FORMAT fmt) {
 }
 
 void OnDestroyResource(device*, resource r) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     g_cbData.erase(r.handle);
     g_mapped.erase(r.handle);
     auto it = g_srvs.find(r.handle);
@@ -461,7 +466,7 @@ bool OnTaa(command_list* cl, const Bindings& b) {
                                          GameSrv(velocity, static_cast<DXGI_FORMAT>(vd.texture.format))};
     if (!t || !srvs[0] || !srvs[1]) return Why("couldn't make our textures or views"), false;
 
-    // motion11.hlsl in the clean state.
+    // motion11.hlsl, then DLSS, with the game's compute bindings saved and put back after.
     ID3D11DeviceContext1* ctx1 = nullptr;
     if (FAILED(ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), reinterpret_cast<void**>(&ctx1))))
         return Why("no Direct3D 11.1 context"), false;
@@ -557,16 +562,20 @@ bool IsTaa(command_list* cl, const Bindings& b) {
 }
 
 bool OnDispatch(command_list* cl, uint32_t, uint32_t, uint32_t) {
-    if (!g_set.enabled) return false;
-    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_set.enabled || g_inOwnWork) return false;
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     auto it = g_bindings.find(cl->get_native());
     if (it == g_bindings.end()) return false;
     const Bindings b = it->second;
-    return IsTaa(cl, b) && OnTaa(cl, b);
+    if (!IsTaa(cl, b)) return false;
+    g_inOwnWork = true;
+    const bool skip = OnTaa(cl, b);
+    g_inOwnWork = false;
+    return skip;
 }
 
 void OnDestroyDevice(device*) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     dlss11::Shutdown();
     ReleaseObjects();
 }
@@ -578,7 +587,7 @@ bool g_keyWasDown = false;
 void LogStats() {
     static int lines = 0;
     if (g_presents % 240 != 0 || lines >= 20) return;
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     if (g_set.enabled && !g_why.empty()) {
         std::string s;
         for (const auto& [why, n] : g_why) s += " {" + why + ": " + std::to_string(n) + "}";
@@ -660,7 +669,7 @@ void DrawOverlay() {
                         static_cast<unsigned long long>(g_skipped.load()));
     std::string err, res = rd::ResolutionError();
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_mutex);
         err = g_error;
     }
     if (!err.empty()) ImGui::TextColored(rd::kWarn, "%s", err.c_str());
@@ -670,7 +679,7 @@ void DrawOverlay() {
 std::string Headline(bool* warn) {
     *warn = false;
     if (!g_set.enabled) return "DLSS off (DirectX 11)";
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
     if (!g_error.empty()) return *warn = true, "DLSS: " + g_error;
     if (!g_evaluated) return "DLSS on (DirectX 11): waiting for the game's TAA";
     char buf[96];

@@ -148,3 +148,17 @@ Ray Reconstruction (no ray tracing on DX11).
   RE2DLSS-DX11); UE 4's D3D11 RHI keeps queries open across the frame.
 - dx11b: no context state swap. The compute stage (shader, cbuffers with offsets, 128 SRVs, 64
   UAVs, samplers) is saved before motion11 + DLSS and put back after. Not yet run.
+
+### dx11b crash: the real cause, dx11c fix (2026-11-16)
+
+- dx11b got through the switch to Balanced (feature 2228x1253 -> 3840x2160) and died ~19 s later
+  while the menu loaded, same abort. A real stack walk of the minidump (`tools/mdunwind.py`:
+  .pdata unwind from the module files, names from our PDB) showed:
+  dlss11::Evaluate -> NVSDK_NGX_D3D11_EvaluateFeature -> NGX model DLL -> d3d11 -> ReShade
+  (dxgi.dll) -> **our event handler -> std::_Throw_Cpp_error** -> terminate -> abort.
+  NGX's D3D11 calls come back through ReShade into upscaler11's handlers on the same thread, and
+  `std::mutex` was already held by the TAA hook ("resource deadlock would occur"). dx11a's crash
+  was almost certainly the same; the context state swap was a wrong guess (removed anyway).
+- dx11c: `std::recursive_mutex`, and a thread-local guard so bind/push/dispatch events from NGX's
+  own work don't overwrite the tracked game bindings or re-enter the TAA hook.
+- Usage: `python -I tools/mdunwind.py <dump> E:\StrayDLSS\bin\obj` (dumps in %LOCALAPPDATA%\CrashDumps).

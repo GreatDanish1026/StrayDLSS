@@ -171,3 +171,15 @@ Ray Reconstruction (no ray tracing on DX11).
   View buffer didn't pass the layout check). User: "appeared to work great". No new crash dump.
 - Not yet tested on DX11: F9 toggle, motion quality checked closely, DX12 regression after the
   ResolutionTick refactor.
+
+## 1.2.0 DX12 check (2026-11-16) and 1.2.1
+
+- DX12 with 1.2.0 (`-dx12`, DLSS-G 2x, Ray Reconstruction on): DLAA SR, then RR from the first
+  level (denoisers off), Quality, Balanced and Performance switched live; DLSS mode cvars fine
+  after the ResolutionTick refactor; Streamline shut down cleanly; user: "looks good".
+- **Bug (since 1.1.0)**: our render-size textures (motion, mask, 3 RR guides = 5 per size with RR)
+  were never freed and capped at 16. After DLAA -> Quality -> Balanced -> Performance the 17th was
+  refused: "motion: no texture (limit)" on every frame, the game's TAA took over, frame generation
+  paused.
+- 1.2.1: textures unused for 8 presented frames are freed (with their views) when room is needed;
+  limit 32. Installed, not yet run.

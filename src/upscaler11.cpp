@@ -12,8 +12,9 @@
 //   motion11.hlsl: our motion vectors (camera motion from depth and View.ClipToPrevClip, engine
 //     velocity for moving objects) and an r32f copy of the depth;
 //   DLSS (dlss11.cpp, NGX D3D11): colour, that depth and motion in, the TAA's output written.
-// Both run in a clean ID3DDeviceContextState swapped in and out, so the game's bindings stay as
-// they were. The game's dispatch is then skipped; its output is next frame's history too.
+// The compute stage's bindings are saved before and put back after (CsState); an
+// ID3DDeviceContextState swap, as in RE2DLSS-DX11, made D3D11 abort in UE 4's next calls. The
+// game's dispatch is then skipped; its output is next frame's history too.
 //
 // Render resolution: the DLSS mode sets r.ScreenPercentage / r.TemporalAA.Upsampling on the game
 // thread through upscaler.cpp's code (ResolutionTick), as on DX12. No FSR, frame generation or Ray
@@ -238,6 +239,48 @@ template <class T> void SafeRelease(T*& p) {
     p = nullptr;
 }
 
+// The immediate context's compute stage, saved before our work and put back after it. (Not an
+// ID3DDeviceContextState swap: that made D3D11 abort in UE 4's next calls, see dlss11.cpp.)
+struct CsState {
+    ID3D11ComputeShader* cs = nullptr;
+    ID3D11ClassInstance* inst[256] = {};
+    UINT numInst = 256;
+    ID3D11Buffer* cb[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+    UINT cbFirst[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+    UINT cbCount[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+    ID3D11ShaderResourceView* srv[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+    ID3D11UnorderedAccessView* uav[D3D11_1_UAV_SLOT_COUNT] = {};
+    ID3D11SamplerState* smp[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT] = {};
+
+    void Save(ID3D11DeviceContext1* c) {
+        c->CSGetShader(&cs, inst, &numInst);
+        c->CSGetConstantBuffers1(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, cb, cbFirst, cbCount);
+        c->CSGetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, srv);
+        c->CSGetUnorderedAccessViews(0, D3D11_1_UAV_SLOT_COUNT, uav);
+        c->CSGetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, smp);
+    }
+
+    void Restore(ID3D11DeviceContext1* c) {
+        c->CSSetShader(cs, numInst ? inst : nullptr, numInst);
+        c->CSSetConstantBuffers1(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, cb, cbFirst, cbCount);
+        // UAVs first: the game's SRVs may be our UAVs' resources (D3D11 unbinds conflicts).
+        static const UINT keep[D3D11_1_UAV_SLOT_COUNT] = {
+#define K8 UINT(-1), UINT(-1), UINT(-1), UINT(-1), UINT(-1), UINT(-1), UINT(-1), UINT(-1)
+            K8, K8, K8, K8, K8, K8, K8, K8
+#undef K8
+        };
+        c->CSSetUnorderedAccessViews(0, D3D11_1_UAV_SLOT_COUNT, uav, keep);
+        c->CSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, srv);
+        c->CSSetSamplers(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT, smp);
+        SafeRelease(cs);
+        for (UINT i = 0; i < numInst && i < 256; ++i) SafeRelease(inst[i]);
+        for (auto*& p : cb) SafeRelease(p);
+        for (auto*& p : srv) SafeRelease(p);
+        for (auto*& p : uav) SafeRelease(p);
+        for (auto*& p : smp) SafeRelease(p);
+    }
+};
+
 void ReleaseObjects() {
     for (Targets& t : g_targets) {
         for (auto*& u : t.uav) SafeRelease(u);
@@ -256,25 +299,19 @@ bool CreateObjects(ID3D11Device* d3d) {
     if (g_objectsFailed) return false;
     ReleaseObjects();
     g_d3d = d3d;
-    ID3D11Device1* dev1 = nullptr;
-    if (SUCCEEDED(d3d->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(&dev1)))) {
-        const D3D_FEATURE_LEVEL level = d3d->GetFeatureLevel();
-        dev1->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION, __uuidof(ID3D11Device), nullptr, &g_cleanState);
-        dev1->Release();
-    }
     D3D11_BUFFER_DESC bd = {};
     bd.ByteWidth = 96;
     bd.Usage = D3D11_USAGE_DYNAMIC;
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    if (!g_cleanState || FAILED(d3d->CreateComputeShader(kMotion11Cs, sizeof(kMotion11Cs), nullptr, &g_motionCs)) ||
+    if (FAILED(d3d->CreateComputeShader(kMotion11Cs, sizeof(kMotion11Cs), nullptr, &g_motionCs)) ||
         FAILED(d3d->CreateBuffer(&bd, nullptr, &g_motionCb))) {
-        g_error = g_cleanState ? "couldn't create the motion vector shader" : "Direct3D 11.1 context state not available";
+        g_error = "couldn't create the motion vector shader";
         Log("DX11: %s", g_error.c_str());
         g_objectsFailed = true;
         return false;
     }
-    Log("DX11: motion vector shader and clean context state created");
+    Log("DX11: motion vector shader created");
     return true;
 }
 
@@ -438,18 +475,21 @@ bool OnTaa(command_list* cl, const Bindings& b) {
         memcpy(ms.pData, p, sizeof(p));
         ctx->Unmap(g_motionCb, 0);
     }
-    ID3DDeviceContextState* game = nullptr;
-    ctx1->SwapDeviceContextState(g_cleanState, &game);
-    ctx1->ClearState();
+    static CsState saved;  // large: not on the stack
+    saved.numInst = 256;
+    saved.Save(ctx1);
+    // The game's UAV (the TAA output) and SRVs off first, so our views of the same resources bind.
+    ID3D11UnorderedAccessView* noUav[D3D11_1_UAV_SLOT_COUNT] = {};
+    ID3D11ShaderResourceView* noSrv[16] = {};
+    ctx->CSSetUnorderedAccessViews(0, D3D11_1_UAV_SLOT_COUNT, noUav, nullptr);
+    ctx->CSSetShaderResources(0, 16, noSrv);
     ctx->CSSetShader(g_motionCs, nullptr, 0);
     ctx->CSSetConstantBuffers(0, 1, &g_motionCb);
     ctx->CSSetShaderResources(0, 2, srvs);
     ctx->CSSetUnorderedAccessViews(0, 3, t->uav, nullptr);
     ctx->Dispatch((static_cast<UINT>(size[0]) + 7) / 8, (static_cast<UINT>(size[1]) + 7) / 8, 1);
-    ctx1->ClearState();
-    ctx1->SwapDeviceContextState(game, nullptr);
-    if (game) game->Release();
-    ctx1->Release();
+    ctx->CSSetUnorderedAccessViews(0, 3, noUav, nullptr);  // NGX reads these textures
+    ctx->CSSetShaderResources(0, 2, noSrv);
 
     const unsigned rw = static_cast<unsigned>(size[0]), rh = static_cast<unsigned>(size[1]);
     const uint64_t sizeKey = (static_cast<uint64_t>(rw) << 48) | (static_cast<uint64_t>(rh) << 32) |
@@ -468,7 +508,10 @@ bool OnTaa(command_list* cl, const Bindings& b) {
     in.motionScaleX = 1, in.motionScaleY = 1;  // motion11.hlsl writes previous minus current in pixels
     in.reset = reset;
     in.preset = g_set.preset;
-    if (!dlss11::Evaluate(ctx, in, err)) {
+    const bool ok = dlss11::Evaluate(ctx, in, err);
+    saved.Restore(ctx1);
+    ctx1->Release();
+    if (!ok) {
         if (g_error != err) Log("DX11 DLSS: %s", err.c_str());
         g_error = err;
         return Why("DLSS evaluation failed"), false;

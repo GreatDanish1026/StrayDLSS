@@ -137,21 +137,10 @@ bool Init(ID3D11Device* device, std::string& error) {
     g_initTried = true;
     g_device = device;
 
-    // NGX runs in a pipeline state of its own (D3D11.1 device context state), so whatever it binds
-    // never touches the game's.
-    ID3D11Device1* dev1 = nullptr;
-    if (SUCCEEDED(device->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(&dev1)))) {
-        const D3D_FEATURE_LEVEL level = device->GetFeatureLevel();
-        dev1->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION, __uuidof(ID3D11Device), nullptr, &g_cleanState);
-        dev1->Release();
-    }
-    if (!g_cleanState) {
-        g_initError = "Direct3D 11.1 context state not available: DLSS can't run safely";
-        g_status = g_initError;
-        rd::Log("%s", g_initError.c_str());
-        error = g_initError;
-        return false;
-    }
+    // Stray: no ID3DDeviceContextState swap (RE2DLSS-DX11 swapped one in around NGX). UE 4's D3D11
+    // RHI keeps queries open across the frame, and swapping the context state mid-frame made D3D11
+    // throw (abort) in the game's next calls (1.2.0-dx11a, 2026-11-16). The caller saves and
+    // restores the compute stage around Evaluate instead (upscaler11.cpp).
 
     static const std::wstring dir = rd::ExeDir();
     static const wchar_t* paths[] = {dir.c_str()};
@@ -203,15 +192,6 @@ bool Evaluate(ID3D11DeviceContext* context, const Inputs& requested, std::string
         error = g_initError.empty() ? "DLSS not started" : g_initError;
         return false;
     }
-    ID3D11DeviceContext1* ctx1 = nullptr;
-    if (FAILED(context->QueryInterface(__uuidof(ID3D11DeviceContext1), reinterpret_cast<void**>(&ctx1)))) {
-        error = "Direct3D 11.1 device context not available";
-        return false;
-    }
-    ID3DDeviceContextState* gameState = nullptr;
-    ctx1->SwapDeviceContextState(g_cleanState, &gameState);
-    ctx1->ClearState();  // the clean state keeps what NGX left in it last time
-
     bool ok = true;
     const bool fresh = !g_feature.handle || in.renderWidth != g_feature.renderW || in.renderHeight != g_feature.renderH ||
                        in.outputWidth != g_feature.outW || in.outputHeight != g_feature.outH ||
@@ -241,9 +221,6 @@ bool Evaluate(ID3D11DeviceContext* context, const Inputs& requested, std::string
         }
     }
 
-    ctx1->SwapDeviceContextState(gameState, nullptr);  // the game's bindings back, exactly
-    if (gameState) gameState->Release();
-    ctx1->Release();
     if (!ok) {
         g_status = error;
         return false;

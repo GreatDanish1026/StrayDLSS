@@ -34,8 +34,8 @@ struct Inputs {
 bool Init(ID3D11Device* device, std::string& error);
 
 // Runs DLSS on the immediate context. One feature (history), recreated when the sizes, preset or
-// exposure mode change. The context's pipeline state is swapped for a clean one around NGX's work
-// and put back afterwards, so the game's bindings are untouched.
+// exposure mode change. NGX changes the context's compute bindings: the caller saves and restores
+// them (upscaler11.cpp's CsState).
 bool Evaluate(ID3D11DeviceContext* context, const Inputs& in, std::string& error);
 
 void ReleaseFeatures();

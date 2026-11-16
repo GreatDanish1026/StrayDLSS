@@ -137,3 +137,14 @@ Ray Reconstruction (no ray tracing on DX11).
 - DLSS mode via upscaler.cpp's game-thread cvar code (`rd::ResolutionTick`); shares the ini keys
   Enabled, DlssMode, DlssModel with DX12. F9 toggles.
 - The D3D11 capture probe is now opt-in: ReShade.ini `[StrayDLSS] Dx11Capture=1`.
+
+### 1.2.0-dx11a crash, dx11b fix (2026-11-16)
+
+- dx11a: DLSS ran (View buffer found at **b1**, NGX D3D11 ready, DLAA 3840x2160 first frame
+  evaluated), then the game died ~0.3 s later, twice: fail-fast 0xc0000409 (code 7, abort) in
+  ucrtbase, no UE crash report. Minidump (heuristic stack, %LOCALAPPDATA%\CrashDumps): game ->
+  d3d11 -> nvwgf2umx -> d3d11 C++ exception unwinding -> abort, i.e. D3D11 threw inside one of the
+  game's own calls. Suspected cause: the ID3DDeviceContextState swap around our work (from
+  RE2DLSS-DX11); UE 4's D3D11 RHI keeps queries open across the frame.
+- dx11b: no context state swap. The compute stage (shader, cbuffers with offsets, 128 SRVs, 64
+  UAVs, samplers) is saved before motion11 + DLSS and put back after. Not yet run.

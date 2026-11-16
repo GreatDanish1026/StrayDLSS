@@ -183,3 +183,7 @@ Ray Reconstruction (no ray tracing on DX11).
   paused.
 - 1.2.1: textures unused for 8 presented frames are freed (with their views) when room is needed;
   limit 32. Installed, not yet run.
+- 1.2.1 test (2026-11-16, DX12, DLSS-G 2x, RR on): Performance, DLAA, Quality, Balanced,
+  Performance, Ultra Performance, Quality: all five render sizes ran with RR (25 textures, over
+  1.2.0's limit of 16), never "no texture (limit)", clean exit. The eviction path didn't run (25 <
+  32; the five DLSS modes need at most 25, so it's only a safety net for window-size changes).

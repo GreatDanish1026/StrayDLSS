@@ -30,6 +30,7 @@
 #include "common.hpp"
 #include "dxbc.hpp"
 #include "probe11.hpp"
+#include "upscaler11.hpp"
 #include "version.h"
 #include "../third_party/reshade/utils/descriptor_tracking.hpp"
 
@@ -617,6 +618,7 @@ void OnPresent(command_queue*, swapchain* sc, const rect*, const rect*, uint32_t
 // makes its device: the DX12 code (frame generation wraps swapchain creation) mustn't see a D3D11
 // device, so in DX11 mode only probe11.cpp is registered.
 bool g_dx11 = false;
+bool g_dx11Capture = false;  // ReShade.ini [StrayDLSS] Dx11Capture=1: the D3D11 frame capture probe too
 
 bool LaunchedDx12() {
     std::wstring cmd = GetCommandLineW();
@@ -634,7 +636,16 @@ bool LaunchedDx12() {
 void DrawOverlay(effect_runtime*) {
     ImGui::TextDisabled(RD_PRODUCT " " RD_VERSION);
     if (g_dx11) {
-        probe11::DrawOverlay();
+        bool warn11 = false;
+        const std::string head = upscaler11::Headline(&warn11);
+        if (warn11) ImGui::TextColored(rd::kWarn, "%s", head.c_str());
+        else ImGui::TextUnformatted(head.c_str());
+        ImGui::Spacing();
+        upscaler11::DrawOverlay();
+        if (g_dx11Capture) {
+            ImGui::SeparatorText("Frame capture");
+            probe11::DrawOverlay();
+        }
         return;
     }
     bool warn = false;
@@ -705,6 +716,11 @@ bool PipeHasTaaRegisters(pipeline pipe) {
     return d.valid && d.srv[0] == 0x3f && d.srv[1] == 0 && d.uav == 1;
 }
 
+bool CodeHasTaaRegisters(const void* code, size_t size) {
+    const ShaderDecl d = ParseDxbc(code, size);
+    return d.valid && d.srv[0] == 0x3f && d.srv[1] == 0 && d.uav == 1;
+}
+
 }  // namespace rd
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
@@ -715,7 +731,11 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
             OpenLog();
             g_dx11 = !LaunchedDx12();
             if (g_dx11) {
-                probe11::Register(module);
+                Log("DirectX 11 mode (no -dx12 on the command line): DLSS only (no FSR, frame generation or Ray "
+                    "Reconstruction)");
+                upscaler11::Register();
+                reshade::get_config_value(nullptr, RD_PRODUCT, "Dx11Capture", g_dx11Capture);
+                if (g_dx11Capture) probe11::Register(module);
                 reshade::register_overlay(RD_PRODUCT, &DrawOverlay);
                 break;
             }

@@ -63,6 +63,13 @@ void DrawUpscalerStatus();
 void DrawUpscalerAdvanced();
 // One line for the top of the overlay; *warn when it's a problem.
 std::string UpscalerHeadline(bool* warn);
+// Render resolution for a DLSS mode (0 game's, 1 DLAA, 2 Quality, 3 Balanced, 4 Performance,
+// 5 Ultra Performance): r.ScreenPercentage and r.TemporalAA.Upsampling set on the game thread.
+// Call on every present; the DirectX 11 path (upscaler11.cpp) uses it, DX12 does it itself.
+void ResolutionTick(bool enabled, int mode);
+std::string ResolutionError();  // empty unless the cvars couldn't be used
+// PipeHasTaaRegisters' test on raw DXBC: declares exactly t0-t5 and u0.
+bool CodeHasTaaRegisters(const void* code, size_t size);
 
 // Overlay helpers (main.cpp), in the Tweaks add-ons' style.
 float ControlWidth();

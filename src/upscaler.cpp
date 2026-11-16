@@ -1545,16 +1545,22 @@ void LogVelocitySettings() {
     }
 }
 
-// About twice a second, on ReShade's present: what the game thread should hold.
-void UpdateResolution() {
+// About twice a second, on ReShade's present: what the game thread should hold. Also used by the
+// DirectX 11 path (ResolutionTick below), which has no Ray Reconstruction.
+void UpdateResolutionFor(bool enabled, int mode, bool rrRunning) {
     static uint64_t presents = 0;
     if (++presents % 30 != 0) return;
-    const bool want = g_set.enabled && g_set.mode > kModeGame && g_set.mode < kDlssModeCount;
-    if (!g_res.manager && !g_res.failed && (want || g_set.enabled) && !FindResolutionCvars()) g_res.failed = true;
+    const bool want = enabled && mode > kModeGame && mode < kDlssModeCount;
+    if (!g_res.manager && !g_res.failed && (want || enabled) && !FindResolutionCvars()) g_res.failed = true;
     LogVelocitySettings();
-    g_res.want = want ? kDlssModePercent[g_set.mode] : 0.0f;
+    g_res.want = want ? kDlssModePercent[mode] : 0.0f;
     // Denoisers off while Ray Reconstruction ran in the last couple of seconds.
-    g_dn.wantOff = g_set.enabled && g_set.rr && g_rrEvaluated.load() > 0 && g_presents.load() - g_rrLastPresent.load() < 120;
+    g_dn.wantOff = rrRunning;
+}
+
+void UpdateResolution() {
+    UpdateResolutionFor(g_set.enabled, g_set.mode,
+                        g_set.enabled && g_set.rr && g_rrEvaluated.load() > 0 && g_presents.load() - g_rrLastPresent.load() < 120);
 }
 
 void LogStats() {
@@ -1610,6 +1616,10 @@ void OnPresent(command_queue*, swapchain*, const rect*, const rect*, uint32_t, c
 void RestoreListState(command_list* cl) {
     if (ListState* s = State(cl)) Restore(cl, *s);
 }
+
+void ResolutionTick(bool enabled, int mode) { UpdateResolutionFor(enabled, mode, false); }
+
+std::string ResolutionError() { return g_res.error; }
 
 void RegisterUpscaler() {
     LoadSettings();

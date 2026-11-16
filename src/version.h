@@ -3,4 +3,4 @@
 
 #define RD_PRODUCT "StrayDLSS"  // add-on name, log file name, ReShade.ini section
 #define RD_GAME "Stray"
-#define RD_VERSION "1.2.0-dx11probe"
+#define RD_VERSION "1.2.0-dx11a"

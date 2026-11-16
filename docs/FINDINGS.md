@@ -124,3 +124,16 @@ Ray Reconstruction (no ray tracing on DX11).
 - Plan for 0.x DX11: hook `cs37876d91`/`csed0bf55b` dispatch on the immediate context; DLSS via
   NGX D3D11 into u0 (RE2DLSS-DX11's clean ID3DDeviceContextState swap), jitter/matrices from the
   View buffer's CPU writes at the DX12 offsets (1952/2016/2080), then FSR through the D3D12 bridge.
+
+### 1.2.0-dx11a: DLSS on DX11 (2026-11-16, built, not yet run)
+
+- `src/upscaler11.cpp`: tracks the compute stage's t0-t5, u0, b0-b4 per context and the first
+  2112 bytes of every constant buffer of 2112 B-64 KB as the CPU writes them (init data,
+  Map/Unmap, UpdateSubresource). At `cs37876d91`/`csed0bf55b` (or another shader declaring exactly
+  t0-t5 + u0 whose bindings match): View buffer = the bound cbuffer passing the DX12 layout check
+  (logged slot), render size/jitter/ClipToPrevClip at the DX12 offsets; `motion11.hlsl` (cs_5_0:
+  motion, mask, r32f depth copy) and DLSS (`dlss11.cpp`, RE2DLSS-DX11's NGX D3D11 wrapper, auto
+  exposure) each in a clean ID3DDeviceContextState; the game's dispatch skipped.
+- DLSS mode via upscaler.cpp's game-thread cvar code (`rd::ResolutionTick`); shares the ini keys
+  Enabled, DlssMode, DlssModel with DX12. F9 toggles.
+- The D3D11 capture probe is now opt-in: ReShade.ini `[StrayDLSS] Dx11Capture=1`.

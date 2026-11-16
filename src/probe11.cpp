@@ -832,7 +832,7 @@ namespace probe11 {
 void Register(HMODULE module) {
     g_self = module;
     g_veh = AddVectoredExceptionHandler(1, &OnException);
-    Log("DirectX 11 mode (no -dx12 on the command line): frame capture probe only, no upscaling yet");
+    Log("DirectX 11 frame capture probe on (ReShade.ini Dx11Capture=1): F10 captures two frames");
     LoadDumpList();
     reshade::register_event<reshade::addon_event::init_resource>(&OnInitResource);
     reshade::register_event<reshade::addon_event::destroy_resource>(&OnDestroyResource);
@@ -868,7 +868,6 @@ void Unregister() {
 }
 
 void DrawOverlay() {
-    ImGui::TextUnformatted("DirectX 11: probe build (no upscaling yet)");
     if (g_wrongApi) ImGui::TextColored(rd::kWarn, "The game is on DirectX 12 but wasn't started with -dx12: add -dx12.");
     ImGui::BeginDisabled(g_capture.load() != Capture::Idle);
     if (ImGui::Button("Capture frame (F10)")) StartCapture();

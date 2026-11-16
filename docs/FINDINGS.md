@@ -162,3 +162,12 @@ Ray Reconstruction (no ray tracing on DX11).
 - dx11c: `std::recursive_mutex`, and a thread-local guard so bind/push/dispatch events from NGX's
   own work don't overwrite the tracked game bindings or re-enter the TAA hook.
 - Usage: `python -I tools/mdunwind.py <dump> E:\StrayDLSS\bin\obj` (dumps in %LOCALAPPDATA%\CrashDumps).
+
+### dx11c test (2026-11-16): works
+
+- No crash. View buffer at b1; DLAA first frame, then Balanced 2228x1253, Performance 1920x1080
+  (preset M by Automatic), Quality 2561x1441, DLAA again, all switched live from the overlay.
+- 5011 frames upscaled, 6 kept by the game's TAA (camera cuts / loading; one frame where the
+  View buffer didn't pass the layout check). User: "appeared to work great". No new crash dump.
+- Not yet tested on DX11: F9 toggle, motion quality checked closely, DX12 regression after the
+  ResolutionTick refactor.
